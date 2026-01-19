@@ -1,7 +1,34 @@
 import os
+
 KEYWORD_INSTRUCTIONS = ["LOAD", "ADD", "MULT"]
 KEYWORD_COMP_DIRECTIVES = ["START", "ORIGIN", "LTORG", "END"]
 KEYWORD_DATA_DEFINATION = ["DC", "DS"]
+
+
+opcode_table = {
+    "STOP":   {"class": "IS", "opcode": 0},
+    "ADD":    {"class": "IS", "opcode": 1},
+    "SUB":    {"class": "IS", "opcode": 2},
+    "MULT":   {"class": "IS", "opcode": 3},
+    "MOVER":  {"class": "IS", "opcode": 4},
+    "MOVEM":  {"class": "IS", "opcode": 5},
+    "COMP":   {"class": "IS", "opcode": 6},
+    "BC":     {"class": "IS", "opcode": 7},
+    "DIV":    {"class": "IS", "opcode": 8},
+    "READ":   {"class": "IS", "opcode": 9},
+    "PRINT":  {"class": "IS", "opcode": 10},
+    "LOAD":   {"class": "IS", "opcode": 11},
+
+    "START":  {"class": "AD", "opcode": 1},
+    "END":    {"class": "AD", "opcode": 2},
+    "ORIGIN": {"class": "AD", "opcode": 3},
+    "EQU":    {"class": "AD", "opcode": 4},
+    "LTORG":  {"class": "AD", "opcode": 5},
+
+    "DS":     {"class": "DL", "opcode": 1},
+    "DC":     {"class": "DL", "opcode": 2},
+}
+
 
 def extract_lines(file: str)->list:
     with open(file, 'r') as f:
@@ -31,17 +58,16 @@ def analyze(extracted_lines: list)->dict:
         for instruction in line:
             if instruction.startswith(';'):
                 count_comments += 1
-                comments.append(f"{extracted_lines.index(line)+1}     " + ' '.join(line[line.index(instruction):]))
-                # break
+                comments.append(f"{extracted_lines.index(line)+1}     " + ' '.join(line[line.index(instruction):]) + f"    {line[line.index(";"):]}")
             elif instruction in KEYWORD_INSTRUCTIONS:
                 count_instructions += 1
-                instructions.append(f"{extracted_lines.index(line)+1}     " + ' '.join(line))
+                instructions.append(f"{extracted_lines.index(line)+1}     " + ' '.join(line) + f"    {line}")
             
             elif instruction in KEYWORD_COMP_DIRECTIVES:
                 count_compiler_directives += 1
-                compiler_directives.append(f"{extracted_lines.index(line)+1}     " + ' '.join(line))
+                compiler_directives.append(f"{extracted_lines.index(line)+1}     " + ' '.join(line) + f"    {line}")
 
-    print(f"[COMMENTS] ({count_comments}):\n")
+    print(f"[COMMENTS] ({count_comments}):")
     print('\n'.join(comments))
     print(f"\n[INSTRUCTIONS] ({count_instructions}):")
     print('\n'.join(instructions))
@@ -49,7 +75,7 @@ def analyze(extracted_lines: list)->dict:
     print('\n'.join(compiler_directives))
     
 if __name__ == "__main__":
-    file = './testpgm.asm'
+    file = './sample.asm'
     lines = extract_lines(file)
     instructions = extract_instructions(lines)
     analyze(instructions)
