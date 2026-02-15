@@ -50,6 +50,8 @@ symbol_table = {}
 
 literal_table = {}
 
+pool_table = []
+
 def extract_lines(file: str)->list:
     with open(file, 'r') as f:
         lines = f.readlines()
@@ -73,9 +75,11 @@ def is_literal(token: str)->bool:
 
 def analyze(extracted_lines: list)->dict:
     global LC
+    print('-'*3 + '+' + '-'*31 + '+' + '-'*8 + '+')
     print(f"{'No.':<3}|", f"{'Instruction':<30}|", f"{'LC':<6} |")
     print('-'*3 + '+' + '-'*31 + '+' + '-'*8 + '+')
     LTORG_FLAG = False
+    pool_table.append(1)  # First pool starts at literal index 1
     for ins in extracted_lines:
         
         if LTORG_FLAG:        
@@ -110,7 +114,8 @@ def analyze(extracted_lines: list)->dict:
             elif 'LTORG' in ins:
                 LTORG_FLAG = True
                 print(f"{extracted_lines.index(ins)+1:<3}|", f"{' '.join(ins):<30}|", f"{'':<6} |")
-                LC += 1
+                # Add next pool starting index to pool table
+                pool_table.append(len(literal_table) + 1)
             elif 'DS' in ins:
                 size = int(ins[ins.index('DS') + 1])
                 print(f"{extracted_lines.index(ins)+1:<3}|", f"{' '.join(ins):<30}|", f"{LC:<6} |")
@@ -130,19 +135,14 @@ def analyze(extracted_lines: list)->dict:
                 LC += 1
             
         # print('-'*3 + '+' + '-'*31 + '+' + '-'*8 + '+')
-            
 
     count_comments = 0
     count_instructions = 0
     count_compiler_directives = 0
-    count_data_definitions = 0
     
     comments = []
     instructions = []
     compiler_directives = []
-    data_definitions = []
-    
-    
     
     for line in extracted_lines:
         for instruction in line:
@@ -157,12 +157,27 @@ def analyze(extracted_lines: list)->dict:
                 count_compiler_directives += 1
                 compiler_directives.append(f"{extracted_lines.index(line)+1}     " + ' '.join(line) + f"    {line}")
 
-    # print(f"[COMMENTS] ({count_comments}):")
-    # print('\n'.join(comments))
-    # print(f"\n[INSTRUCTIONS] ({count_instructions}):")
-    # print('\n'.join(instructions))
-    # print(f"\n[COMPILER DIRECTIVES] ({count_compiler_directives}):")
-    # print('\n'.join(compiler_directives))
+    
+    print("\n\nSymbol Table:")
+    print('-'*5 + '+' + '-'*11 + '+' + '-'*9 + '+')
+    print(f"{"#R":<5}|",f"{"SYMBOL":<10}|", f"{"ADDRESS":<7} |")
+    print('-'*5 + '+' + '-'*11 + '+' + '-'*9 + '+')
+    for sym in symbol_table.keys():
+        print(f"{list(symbol_table.keys()).index(sym)+1:<5}|",f"{sym:<10}|", f"{symbol_table[sym]:<7} |")
+    
+    print("\n\nLiteral Table:")
+    print('-'*5 + '+' + '-'*11 + '+' + '-'*9 + '+')
+    print(f"{"#R":<5}|",f"{"LITERAL":<10}|", f"{"ADDRESS":<7} |")
+    print('-'*5 + '+' + '-'*11 + '+' + '-'*9 + '+')
+    for lit in literal_table.keys():
+        print(f"{list(literal_table.keys()).index(lit)+1:<5}|",f"{lit:<10}|", f"{literal_table[lit]:<7} |")
+    
+    print("\n\nPool Table:")
+    print('-'*5 + '+' + '-'*18 + '+')
+    print(f"{"#P":<5}|", f"{"LITERAL INDEX":<16} |")
+    print('-'*5 + '+' + '-'*18 + '+')
+    for i, pool in enumerate(pool_table):
+        print(f"{i+1:<5}|", f"{pool:<16} |")
     
 if __name__ == "__main__":
     file = './sample.asm'
