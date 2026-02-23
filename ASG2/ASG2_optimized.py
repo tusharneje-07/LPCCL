@@ -74,46 +74,116 @@ def analyze(extracted_lines: list) -> None:
             MDT.append(updated)
 
         else:
-            # Non-macro line. If this is a macro call record positional->actual mapping
-            if opcode in MNT:
-                actual_params = [p.replace(',', '') for p in ins[1:]]
-                pos_map = {i + 1: (actual_params[i] if i < len(actual_params) else '')
-                           for i in range(MNT[opcode]['params'])}
-                POSITIONAL_ACTUAL_TBL.append({
-                    'macro': opcode,
-                    'call_no': len(POSITIONAL_ACTUAL_TBL) + 1,
-                    'mapping': pos_map,
-                    'actuals': actual_params
-                })
-
             INTERMEDIATE_CODE.append(ins)
 
+    # collect macro calls from both top-level and MDT before printing
+    collect_macro_calls()
     print_tables()
 
 
+def collect_macro_calls():
+    """Scan INTERMEDIATE_CODE and MDT for lines that are macro calls and
+    populate POSITIONAL_ACTUAL_TBL. This ensures calls inside macro bodies
+    (MDT) are also recorded."""
+    POSITIONAL_ACTUAL_TBL.clear()
+    # Use per-macro call numbering
+    counters = {}
+
+    # scan intermediate code (top-level calls)
+    for ins in INTERMEDIATE_CODE:
+        if not ins:
+            continue
+        op = ins[0]
+        if op in MNT:
+            counters.setdefault(op, 0)
+            counters[op] += 1
+            params = MNT[op]['params']
+            actual_params = [p.replace(',', '') for p in ins[1:]]
+            pos_map = {i + 1: (actual_params[i] if i < len(actual_params) else '')
+                       for i in range(params)}
+            POSITIONAL_ACTUAL_TBL.append({'macro': op, 'call_no': counters[op], 'mapping': pos_map})
+
+    # scan MDT for macro calls inside macro bodies
+    for line in MDT:
+        if not line or line[0] == 'MEND':
+            continue
+        op = line[0]
+        if op in MNT:
+            counters.setdefault(op, 0)
+            counters[op] += 1
+            params = MNT[op]['params']
+            actual_params = [p.replace(',', '') for p in line[1:]]
+            pos_map = {i + 1: (actual_params[i] if i < len(actual_params) else '')
+                       for i in range(params)}
+            POSITIONAL_ACTUAL_TBL.append({'macro': op, 'call_no': counters[op], 'mapping': pos_map})
+
+
 def print_tables():
+    # --- MNT ---
     print("\nMNT:")
-    print(f"{'Macro':<15}|{'Params':<10}|{'MDT Index':<10}")
-    print("-" * 40)
-    for name, data in MNT.items():
-        print(f"{name:<15}|{data['params']:<10}|{data['mdt_index']:<10}")
+    mnt_rows = [(name, str(data['params']), str(data['mdt_index'])) for name, data in MNT.items()]
+    mnt_h = ("Macro", "Params", "MDT Index")
+    w0 = max([len(mnt_h[0])] + [len(r[0]) for r in mnt_rows] or [0])
+    w1 = max([len(mnt_h[1])] + [len(r[1]) for r in mnt_rows] or [0])
+    w2 = max([len(mnt_h[2])] + [len(r[2]) for r in mnt_rows] or [0])
+    sep = f"+-{'-'*w0}-+-{'-'*w1}-+-{'-'*w2}-+"
+    header = f"| {mnt_h[0]:<{w0}} | {mnt_h[1]:^{w1}} | {mnt_h[2]:^{w2}} |"
+    print(sep)
+    print(header)
+    print(sep)
+    for r in mnt_rows:
+        print(f"| {r[0]:<{w0}} | {r[1]:^{w1}} | {r[2]:^{w2}} |")
+    print(sep)
 
+    # --- MDT ---
     print("\nMDT:")
-    for i, ins in enumerate(MDT):
-        print(f"{i:<3} | {' '.join(ins)}")
+    mdt_rows = [(str(i), ' '.join(ins)) for i, ins in enumerate(MDT)]
+    mdt_h = ("Idx", "Instruction")
+    w0 = max([len(mdt_h[0])] + [len(r[0]) for r in mdt_rows] or [0])
+    w1 = max([len(mdt_h[1])] + [len(r[1]) for r in mdt_rows] or [0])
+    sep = f"+-{'-'*w0}-+-{'-'*w1}-+"
+    print(sep)
+    print(f"| {mdt_h[0]:<{w0}} | {mdt_h[1]:<{w1}} |")
+    print(sep)
+    for r in mdt_rows:
+        print(f"| {r[0]:<{w0}} | {r[1]:<{w1}} |")
+    print(sep)
 
+    # --- Intermediate Code ---
     print("\nIntermediate Code:")
-    for i, ins in enumerate(INTERMEDIATE_CODE):
-        print(f"{i:<3} | {' '.join(ins)}")
+    ic_rows = [(str(i), ' '.join(ins)) for i, ins in enumerate(INTERMEDIATE_CODE)]
+    ic_h = ("Idx", "Instruction")
+    w0 = max([len(ic_h[0])] + [len(r[0]) for r in ic_rows] or [0])
+    w1 = max([len(ic_h[1])] + [len(r[1]) for r in ic_rows] or [0])
+    sep = f"+-{'-'*w0}-+-{'-'*w1}-+"
+    print(sep)
+    print(f"| {ic_h[0]:<{w0}} | {ic_h[1]:<{w1}} |")
+    print(sep)
+    for r in ic_rows:
+        print(f"| {r[0]:<{w0}} | {r[1]:<{w1}} |")
+    print(sep)
 
+    # --- Formal -> Positional ---
     print("\nFormal -> Positional Table:")
     for macro, mapping in FORMAL_POSITIONAL_TBL.items():
-        print(f"{macro}:")
-        for formal, pos in mapping.items():
-            print(f"  {formal} -> position {pos}")
+        rows = [(formal, str(pos)) for formal, pos in mapping.items()]
+        if not rows:
+            print(f"{macro}: (no formal parameters)")
+            continue
+        h = ("Formal", "Position")
+        w0 = max([len(h[0])] + [len(r[0]) for r in rows])
+        w1 = max([len(h[1])] + [len(r[1]) for r in rows])
+        sep = f"+-{'-'*w0}-+-{'-'*w1}-+"
+        print(f"\n{macro}:")
+        print(sep)
+        print(f"| {h[0]:<{w0}} | {h[1]:^{w1}} |")
+        print(sep)
+        for r in rows:
+            print(f"| {r[0]:<{w0}} | {r[1]:^{w1}} |")
+        print(sep)
 
-    print("\nPositional -> Actual Table (grouped by macro):")
-    # group entries by macro name
+    # --- Positional -> Actual (grouped by macro) ---
+    print("\nPositional -> Actual Table:")
     grouped = {}
     for entry in POSITIONAL_ACTUAL_TBL:
         grouped.setdefault(entry['macro'], []).append(entry)
@@ -130,20 +200,32 @@ def print_tables():
                 print("  (no positional parameters)")
             continue
 
-        # build header
-        cols = ['Call#'] + [f"Pos{p}" for p in range(1, params+1)]
-        widths = [8] + [15] * params
-        header = "".join(f"{c:<{w}}" for c, w in zip(cols, widths))
-        sep = "".join("-" * w for w in widths)
+        # compute widths per column
+        calls = entries
+        # header columns
+        cols = ["#"] + [f"Pos{p}" for p in range(1, params+1)]
+        # compute widths based on header and content
+        widths = []
+        # # width
+        w_call = max(len(cols[0]), max((len(str(e['call_no'])) for e in calls), default=1))
+        widths.append(w_call)
+        for p in range(1, params+1):
+            maxcell = max((len(e['mapping'].get(p, '')) for e in calls), default=0)
+            widths.append(max(len(f"Pos{p}"), maxcell))
+
+        # build separator
+        sep = "+-" + "-+-".join('-'*w for w in widths) + "-+"
+        header = "| " + " | ".join(f"{c:^{w}}" for c, w in zip(cols, widths)) + " |"
+        print(sep)
         print(header)
         print(sep)
 
-        for e in entries:
-            row = [str(e['call_no'])]
-            for p in range(1, params+1):
-                val = e['mapping'].get(p, '')
-                row.append(val)
-            print("".join(f"{c:<{w}}" for c, w in zip(row, widths)))
+        for e in calls:
+            row = [str(e['call_no'])] + [e['mapping'].get(p, '') for p in range(1, params+1)]
+            line = "| " + " | ".join(f"{c:<{w}}" for c, w in zip(row, widths)) + " |"
+            print(line)
+
+        print(sep)
 
 def expand():
     expanded_code = []
@@ -193,7 +275,6 @@ def expand_instruction(instruction: list, depth: int):
 
 def resolve_line(line: list, param_map: dict) -> list:
     resolved = []
-
     for token in line:
         if token in param_map:
             resolved.append(param_map[token])
