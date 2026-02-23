@@ -5,6 +5,10 @@ MDT = []
 INTERMEDIATE_CODE = []
 PARAMETER_TBL = {}
 
+# Parallel comment storage for MDT and INTERMEDIATE_CODE
+MDT_COMMENTS = []
+INTERMEDIATE_COMMENTS = []
+
 # Maps macro -> { formal_param: positional_index }
 FORMAL_POSITIONAL_TBL = {}
 
@@ -14,25 +18,49 @@ POSITIONAL_ACTUAL_TBL = []
 MAX_RECURSION_DEPTH = 50
 
 
-def extract_lines(file: str) -> list:
-    cleaned = []
+def extract_lines(file: str):
+    code_lines = []
+    comments = []
     with open(file, 'r') as f:
         for raw in f:
-            # remove inline comments starting with ';'
-            line = raw.split(';', 1)[0].strip()
-            if line:
-                cleaned.append(line)
-    return cleaned
+            raw = raw.rstrip('\n')
+            if ';' in raw:
+                parts = raw.split(';', 1)
+                code = parts[0].strip()
+                comment = parts[1].strip()
+            else:
+                code = raw.strip()
+                comment = ''
+
+            # preserve blank/comment-only lines as empty code with comment
+            if code:
+                code_lines.append(code)
+                comments.append(comment)
+            else:
+                # skip completely empty lines (no code, no comment)
+                if comment:
+                    # keep lines that have only comments so they can be printed
+                    code_lines.append('')
+                    comments.append(comment)
+
+    return code_lines, comments
 
 
 def extract_instructions(lines: list) -> list:
-    return [line.split() for line in lines]
+    return [line.split() if line else [] for line in lines]
 
-def analyze(extracted_lines: list) -> None:
+def analyze(extracted_lines: list, comments: list) -> None:
     macro_name = None
     macro_flag = False
 
-    for ins in extracted_lines:
+    for idx, ins in enumerate(extracted_lines):
+        comment = comments[idx] if idx < len(comments) else ''
+        if not ins:
+            # blank or comment-only line; treat as non-macro instruction with no opcode
+            INTERMEDIATE_CODE.append([])
+            INTERMEDIATE_COMMENTS.append(comment)
+            continue
+
         opcode = ins[0]
 
         if opcode == 'MACRO':
@@ -57,6 +85,7 @@ def analyze(extracted_lines: list) -> None:
 
         elif opcode == 'MEND':
             MDT.append(ins)
+            MDT_COMMENTS.append(comment)
             macro_flag = False
             macro_name = None
 
@@ -68,14 +97,18 @@ def analyze(extracted_lines: list) -> None:
             for j, tok in enumerate(updated):
                 tok_clean = tok.replace(',', '')
                 if tok_clean in params:
-                    idx = params.index(tok_clean)
-                    updated[j] = f"#{idx+1}"
+                    idxp = params.index(tok_clean)
+                    updated[j] = f"#{idxp+1}"
 
             MDT.append(updated)
+            MDT_COMMENTS.append(comment)
 
         else:
             INTERMEDIATE_CODE.append(ins)
+            INTERMEDIATE_COMMENTS.append(comment)
 
+    # collect macro calls from both top-level and MDT before printing
+    collect_macro_calls()
     # collect macro calls from both top-level and MDT before printing
     collect_macro_calls()
     print_tables()
@@ -164,7 +197,7 @@ def print_tables():
     print(sep)
 
     # --- Formal -> Positional ---
-    print("\nFormal -> Positional Table:")
+    print("\nFormal vs Positional Table:")
     for macro, mapping in FORMAL_POSITIONAL_TBL.items():
         rows = [(formal, str(pos)) for formal, pos in mapping.items()]
         if not rows:
@@ -183,7 +216,7 @@ def print_tables():
         print(sep)
 
     # --- Positional -> Actual (grouped by macro) ---
-    print("\nPositional -> Actual Table:")
+    print("\nPositional vs. Actual Table:")
     grouped = {}
     for entry in POSITIONAL_ACTUAL_TBL:
         grouped.setdefault(entry['macro'], []).append(entry)
@@ -203,7 +236,7 @@ def print_tables():
         # compute widths per column
         calls = entries
         # header columns
-        cols = ["#"] + [f"Pos{p}" for p in range(1, params+1)]
+        cols = ["#"] + [f"Param{p}" for p in range(1, params+1)]
         # compute widths based on header and content
         widths = []
         # # width
@@ -211,7 +244,7 @@ def print_tables():
         widths.append(w_call)
         for p in range(1, params+1):
             maxcell = max((len(e['mapping'].get(p, '')) for e in calls), default=0)
-            widths.append(max(len(f"Pos{p}"), maxcell))
+            widths.append(max(len(f"Param{p}"), maxcell))
 
         # build separator
         sep = "+-" + "-+-".join('-'*w for w in widths) + "-+"
@@ -230,21 +263,33 @@ def print_tables():
 def expand():
     expanded_code = []
 
-    for code in INTERMEDIATE_CODE:
-        expanded_code.extend(expand_instruction(code, depth=0))
+    for i, code in enumerate(INTERMEDIATE_CODE):
+        comment = INTERMEDIATE_COMMENTS[i] if i < len(INTERMEDIATE_COMMENTS) else ''
+        expanded_code.extend(expand_instruction(code, comment, depth=0))
 
     print("\nExpanded Code:")
-    print("\n".join(" ".join(line) for line in expanded_code))
+    for tokens, comm in expanded_code:
+        line = " ".join(tokens) if tokens else ''
+        if comm:
+            if line:
+                print(f"{line} ;{comm}")
+            else:
+                print(f";{comm}")
+        else:
+            print(line)
 
 
-def expand_instruction(instruction: list, depth: int):
+def expand_instruction(instruction: list, comment: str, depth: int):
     if depth > MAX_RECURSION_DEPTH:
         raise RecursionError("Maximum macro recursion depth exceeded")
+
+    if not instruction:
+        return [(instruction, comment)]
 
     macro_name = instruction[0]
 
     if macro_name not in MNT:
-        return [instruction]
+        return [(instruction, comment)]
 
     actual_params = [p.replace(',', '') for p in instruction[1:]]
     formal_params = PARAMETER_TBL[macro_name]['formal_params']
@@ -264,9 +309,10 @@ def expand_instruction(instruction: list, depth: int):
         if line[0] == 'MEND':
             break
 
+        mdt_comment = MDT_COMMENTS[mdt_index] if mdt_index < len(MDT_COMMENTS) else ''
         resolved_line = resolve_line(line, param_map)
 
-        result.extend(expand_instruction(resolved_line, depth + 1))
+        result.extend(expand_instruction(resolved_line, mdt_comment, depth + 1))
 
         mdt_index += 1
 
@@ -287,8 +333,8 @@ if __name__ == "__main__":
     # locate sample file relative to this script
     base = os.path.dirname(__file__)
     file = os.path.join(base, 'samplepgm.asm')
-    lines = extract_lines(file)
+    lines, comments = extract_lines(file)
     instructions = extract_instructions(lines)
 
-    analyze(instructions)
+    analyze(instructions, comments)
     expand()
