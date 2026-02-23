@@ -127,3 +127,4 @@ if __name__ == "__main__":
     instructions = extract_instructions(lines)
     analyze(instructions)
     expand()
+    print(PARAMETER_TBL)

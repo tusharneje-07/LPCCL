@@ -1,21 +1,33 @@
+import os
+
 MNT = {}
 MDT = []
 INTERMEDIATE_CODE = []
 PARAMETER_TBL = {}
 
-MAX_RECURSION_DEPTH = 50  # Safety guard
+# Maps macro -> { formal_param: positional_index }
+FORMAL_POSITIONAL_TBL = {}
+
+# List of macro calls: each item is {macro, call_no, mapping: {pos: actual}}
+POSITIONAL_ACTUAL_TBL = []
+
+MAX_RECURSION_DEPTH = 50
 
 
 def extract_lines(file: str) -> list:
+    cleaned = []
     with open(file, 'r') as f:
-        return [line.strip() for line in f if line.strip()]
+        for raw in f:
+            # remove inline comments starting with ';'
+            line = raw.split(';', 1)[0].strip()
+            if line:
+                cleaned.append(line)
+    return cleaned
 
 
 def extract_instructions(lines: list) -> list:
     return [line.split() for line in lines]
 
-
-# ---------------- PASS 1 ----------------
 def analyze(extracted_lines: list) -> None:
     macro_name = None
     macro_flag = False
@@ -38,6 +50,11 @@ def analyze(extracted_lines: list) -> None:
                 'formal_params': formal_params
             }
 
+            # build formal->positional table for this macro
+            FORMAL_POSITIONAL_TBL[macro_name] = {
+                formal_params[i]: i + 1 for i in range(len(formal_params))
+            }
+
         elif opcode == 'MEND':
             MDT.append(ins)
             macro_flag = False
@@ -47,13 +64,28 @@ def analyze(extracted_lines: list) -> None:
             params = PARAMETER_TBL[macro_name]['formal_params']
             updated = ins.copy()
 
-            if len(ins) > 1 and ins[1].replace(',', '') in params:
-                index = params.index(ins[1].replace(',', ''))
-                updated[1] = f"#{index + 1}"
+            # replace any token that matches a formal parameter with positional #n
+            for j, tok in enumerate(updated):
+                tok_clean = tok.replace(',', '')
+                if tok_clean in params:
+                    idx = params.index(tok_clean)
+                    updated[j] = f"#{idx+1}"
 
             MDT.append(updated)
 
         else:
+            # Non-macro line. If this is a macro call record positional->actual mapping
+            if opcode in MNT:
+                actual_params = [p.replace(',', '') for p in ins[1:]]
+                pos_map = {i + 1: (actual_params[i] if i < len(actual_params) else '')
+                           for i in range(MNT[opcode]['params'])}
+                POSITIONAL_ACTUAL_TBL.append({
+                    'macro': opcode,
+                    'call_no': len(POSITIONAL_ACTUAL_TBL) + 1,
+                    'mapping': pos_map,
+                    'actuals': actual_params
+                })
+
             INTERMEDIATE_CODE.append(ins)
 
     print_tables()
@@ -74,8 +106,45 @@ def print_tables():
     for i, ins in enumerate(INTERMEDIATE_CODE):
         print(f"{i:<3} | {' '.join(ins)}")
 
+    print("\nFormal -> Positional Table:")
+    for macro, mapping in FORMAL_POSITIONAL_TBL.items():
+        print(f"{macro}:")
+        for formal, pos in mapping.items():
+            print(f"  {formal} -> position {pos}")
 
-# ---------------- PASS 2 (Recursive Expansion) ----------------
+    print("\nPositional -> Actual Table (grouped by macro):")
+    # group entries by macro name
+    grouped = {}
+    for entry in POSITIONAL_ACTUAL_TBL:
+        grouped.setdefault(entry['macro'], []).append(entry)
+
+    for macro in MNT.keys():
+        entries = grouped.get(macro, [])
+        params = MNT[macro]['params']
+        print(f"\n{macro}: {params} param(s), {len(entries)} call(s)")
+
+        if params == 0:
+            if entries:
+                print("  (no positional parameters) — calls recorded")
+            else:
+                print("  (no positional parameters)")
+            continue
+
+        # build header
+        cols = ['Call#'] + [f"Pos{p}" for p in range(1, params+1)]
+        widths = [8] + [15] * params
+        header = "".join(f"{c:<{w}}" for c, w in zip(cols, widths))
+        sep = "".join("-" * w for w in widths)
+        print(header)
+        print(sep)
+
+        for e in entries:
+            row = [str(e['call_no'])]
+            for p in range(1, params+1):
+                val = e['mapping'].get(p, '')
+                row.append(val)
+            print("".join(f"{c:<{w}}" for c, w in zip(row, widths)))
+
 def expand():
     expanded_code = []
 
@@ -87,15 +156,11 @@ def expand():
 
 
 def expand_instruction(instruction: list, depth: int):
-    """
-    Recursively expands macros.
-    """
     if depth > MAX_RECURSION_DEPTH:
         raise RecursionError("Maximum macro recursion depth exceeded")
 
     macro_name = instruction[0]
 
-    # Not a macro call → return as-is
     if macro_name not in MNT:
         return [instruction]
 
@@ -119,7 +184,6 @@ def expand_instruction(instruction: list, depth: int):
 
         resolved_line = resolve_line(line, param_map)
 
-        # Recursive call if nested macro
         result.extend(expand_instruction(resolved_line, depth + 1))
 
         mdt_index += 1
@@ -128,9 +192,6 @@ def expand_instruction(instruction: list, depth: int):
 
 
 def resolve_line(line: list, param_map: dict) -> list:
-    """
-    Replace #n parameters using current scope mapping.
-    """
     resolved = []
 
     for token in line:
@@ -141,10 +202,10 @@ def resolve_line(line: list, param_map: dict) -> list:
 
     return resolved
 
-
-# ---------------- MAIN ----------------
 if __name__ == "__main__":
-    file = './samplepgm.asm'
+    # locate sample file relative to this script
+    base = os.path.dirname(__file__)
+    file = os.path.join(base, 'samplepgm.asm')
     lines = extract_lines(file)
     instructions = extract_instructions(lines)
 
