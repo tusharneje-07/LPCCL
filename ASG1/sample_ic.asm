@@ -3,7 +3,7 @@ A DC 01
 LOAD A
 LOAD C
 ADD ='5'
-ADD D
+AD D
 ORIGIN A+2
 MULT ='10'
 ADD L
@@ -13,4 +13,5 @@ ADD B
 B DS 1
 C EQU B
 A DS 1
+X DS 1
 END

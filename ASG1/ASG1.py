@@ -54,6 +54,20 @@ literal_table = []  # list of {'name': str, 'address': int|None}
 
 pool_table = []  # list of 1-based start indices into literal_table
 
+error_table = {
+    "E01": "Duplicate Definition of Symbol",
+    "E02": "Symbol Not Declared",
+    "E03": "Invalid Mnemonic",
+}
+
+warning_table = {
+    "W01": "Symbol Declared But Not Used",
+}
+
+errors   = []   
+warnings = []   
+symbol_usage = set()  
+
 def extract_lines(file: str)->list:
     with open(file, 'r') as f:
         lines = f.readlines()
@@ -76,31 +90,25 @@ def is_literal(token: str)->bool:
     return False
 
 def get_symbol_index(symbol: str) -> int:
-    """Get the index of a symbol in the symbol table (1-based)"""
     symbols = list(symbol_table.keys())
     if symbol in symbols:
         return symbols.index(symbol) + 1
     return 0
 
 def get_literal_index(literal: str, pool_start_0: int = 0) -> int:
-    """Get the 1-based global index of a literal, searching from pool_start_0 onwards."""
     for i in range(pool_start_0, len(literal_table)):
         if literal_table[i]['name'] == literal:
             return i + 1
     return 0
 
 def get_opcode_tuple(mnemonic: str) -> str:
-    """Get the opcode tuple (class, opcode) for a mnemonic"""
     if mnemonic in opcode_table:
         info = opcode_table[mnemonic]
         return f"({info['class']}, {info['opcode']:02d})"
     return ""
 
 def get_operand_tuple(operand: str, pool_start_0: int = 0) -> str:
-    """Get the operand tuple based on operand type.
-    pool_start_0: 0-based index into literal_table where the current pool begins."""
     if operand.startswith("='") or operand.startswith("="):
-        # Literal — find in current pool
         idx = get_literal_index(operand, pool_start_0)
         return f"(L, {idx:02d})"
     elif operand.isdigit():
@@ -118,28 +126,53 @@ def get_operand_tuple(operand: str, pool_start_0: int = 0) -> str:
 def analyze(extracted_lines: list)->dict:
     global LC
     global intermediate_code
-    
-    # ===================== PASS 1: Build Symbol and Literal Tables =====================
-    pool_table.append(1)           # First pool starts at literal index 1 (1-based)
+
+    pool_table.append(1)
     current_pool_lit_start = 0     # 0-based index into literal_table where current pool begins
     symbol_order = []
-    
-    for ins in extracted_lines:
-        # Add symbol definition (first-definition-wins)
-        if is_symobol(ins[0]):
-            if ins[0] not in symbol_order:
-                symbol_order.append(ins[0])
-            if symbol_table.get(ins[0]) is None:
-                symbol_table[ins[0]] = LC
-        
-        # Track forward references in operands
-        for token in ins[1:]:
+    error_lines = set()  # set of 1-based line numbers with errors
+
+    for line_num_p1, ins in enumerate(extracted_lines, start=1):
+        if len(ins) >= 2 and ins[1] in opcode_table:
+            lbl   = ins[0]
+            mnem  = ins[1]
+        else:
+            lbl   = None
+            mnem  = ins[0]
+
+        if lbl:
+            if lbl in symbol_table and symbol_table[lbl] is not None:
+                errors.append((
+                    line_num_p1, "E01",
+                    f"Symbol '{lbl}' already defined at address {symbol_table[lbl]}"
+                ))
+                error_lines.add(line_num_p1)
+            else:
+                # Fresh definition OR resolving a forward reference
+                symbol_table[lbl] = LC
+                if lbl not in symbol_order:
+                    symbol_order.append(lbl)
+
+        valid_opcodes = {
+            k for k, v in opcode_table.items()
+            if v['class'] not in ('RG', 'CC')
+        }
+        if mnem not in valid_opcodes:
+            errors.append((
+                line_num_p1, "E03",
+                f"Invalid mnemonic '{mnem}'"
+            ))
+            error_lines.add(line_num_p1)
+            
+        operand_start = 2 if lbl else 1
+        for token in ins[operand_start:]:
             clean_token = token.split('+')[0].split('-')[0]
-            if is_symobol(clean_token) and clean_token not in symbol_order:
-                symbol_order.append(clean_token)
-                symbol_table[clean_token] = None
-        
-        # Add literal only if NOT already present in the CURRENT pool
+            if is_symobol(clean_token):
+                symbol_usage.add(clean_token)
+                if clean_token not in symbol_order:
+                    symbol_order.append(clean_token)
+                    symbol_table[clean_token] = None   # forward / unknown ref
+
         if is_literal(ins[-1]):
             already_in_pool = any(
                 lit['name'] == ins[-1]
@@ -147,7 +180,7 @@ def analyze(extracted_lines: list)->dict:
             )
             if not already_in_pool:
                 literal_table.append({'name': ins[-1], 'address': None})
-        
+
         if 'START' in ins:
             LC = int(ins[ins.index('START') + 1])
         elif 'ORIGIN' in ins:
@@ -156,20 +189,18 @@ def analyze(extracted_lines: list)->dict:
                 LC = int(instruction)
             else:
                 parts = instruction.replace('-', '+-').split('+')
-                base = parts[0]
+                base   = parts[0]
                 offset = int(parts[1]) if len(parts) > 1 else 0
                 base_addr = symbol_table.get(base)
                 if base_addr is not None:
                     LC = base_addr + offset
         elif 'LTORG' in ins:
-            # Assign addresses to current pool's pending literals
             for i in range(current_pool_lit_start, len(literal_table)):
                 if literal_table[i]['address'] is None:
                     literal_table[i]['address'] = LC
                     LC += 1
-            # Start a new pool
             current_pool_lit_start = len(literal_table)
-            pool_table.append(current_pool_lit_start + 1)  # 1-based
+            pool_table.append(current_pool_lit_start + 1)
         elif 'DS' in ins:
             LC += int(ins[ins.index('DS') + 1])
         elif 'END' in ins:
@@ -178,14 +209,43 @@ def analyze(extracted_lines: list)->dict:
                     literal_table[i]['address'] = LC
                     LC += 1
         elif 'EQU' in ins:
-            if is_symobol(ins[0]):
+            if lbl:
                 operand = ins[ins.index('EQU') + 1]
                 if symbol_table.get(operand) is not None:
-                    symbol_table[ins[0]] = symbol_table[operand]
+                    symbol_table[lbl] = symbol_table[operand]
         else:
             LC += 1
+
+    for sym, addr in symbol_table.items():
+        if addr is None:
+            # Find first line that uses this symbol as an operand
+            ref_line = 0
+            for ln, ins in enumerate(extracted_lines, start=1):
+                for token in ins[1:]:
+                    if token.split('+')[0].split('-')[0] == sym:
+                        ref_line = ln
+                        break
+                if ref_line:
+                    break
+            errors.append((
+                ref_line, "E02",
+                f"Symbol '{sym}' used but never declared"
+            ))
+            error_lines.add(ref_line)
+
+    for sym in symbol_table:
+        if sym not in symbol_usage:
+            # find declaration line
+            decl_line = 0
+            for ln, ins in enumerate(extracted_lines, start=1):
+                if is_symobol(ins[0]) and ins[0] == sym:
+                    decl_line = ln
+                    break
+            warnings.append((
+                decl_line, "W01",
+                f"Symbol '{sym}' declared but never used"
+            ))
     
-    # ===================== PASS 2: Generate Intermediate Code =====================
     LC = 0
     current_pool_idx = 0        # which pool we're in (0-based index into pool_table)
     processed_lit_0idx = set()  # 0-based indices of literal_table entries already printed
@@ -209,7 +269,8 @@ def analyze(extracted_lines: list)->dict:
         operand_ic = ""
         
         tokens = ins[:]
-        if is_symobol(tokens[0]):
+        # Same rule as Pass 1: label only if the second token is a known mnemonic
+        if len(tokens) >= 2 and tokens[1] in opcode_table:
             label = tokens[0]
             tokens = tokens[1:]
         if len(tokens) >= 1:
@@ -241,7 +302,7 @@ def analyze(extracted_lines: list)->dict:
                 base = parts[0]
                 offset = int(parts[1]) if len(parts) > 1 else 0
                 base_idx = get_symbol_index(base)
-                operand_ic = f"(S, {base_idx:02d})+{offset}" if offset >= 0 else f"(S, {base_idx:02d}){offset}"
+                operand_ic = f"(S, {base_idx:02d})" if offset >= 0 else f"(S, {base_idx:02d}){offset}"
                 base_addr = symbol_table.get(base)
                 if base_addr is not None:
                     LC = base_addr + offset
@@ -249,7 +310,8 @@ def analyze(extracted_lines: list)->dict:
         elif opcode_mnem == 'LTORG':
             opcode_ic = get_opcode_tuple('LTORG')
             lc_str = ""
-            print(f"{line_num:<4}|{label:<8}|{opcode_mnem:<8}|{operand:<12}|{lc_str:<12}|{opcode_ic:<12}|{operand_ic:<15}|")
+            err_flag = " [ERR]" if line_num in error_lines else ""
+            print(f"{line_num:<4}|{label:<8}|{opcode_mnem:<8}|{operand:<12}|{lc_str:<12}|{opcode_ic:<12}|{operand_ic:<15}|{err_flag}")
             intermediate_code.append({'lc': lc_str, 'opcode_ic': opcode_ic, 'operand_ic': operand_ic})
             # Print ONLY the literals belonging to the current pool (not future pools)
             next_pool_start_0 = pool_table[current_pool_idx + 1] - 1 if current_pool_idx + 1 < len(pool_table) else len(literal_table)
@@ -296,7 +358,8 @@ def analyze(extracted_lines: list)->dict:
             LC += 1
         
         intermediate_code.append({'lc': lc_str, 'opcode_ic': opcode_ic, 'operand_ic': operand_ic})
-        print(f"{line_num:<4}|{label:<8}|{opcode_mnem:<8}|{operand:<12}|{lc_str:<12}|{opcode_ic:<12}|{operand_ic:<15}|")
+        err_flag = " [ERR]" if line_num in error_lines else ""
+        print(f"{line_num:<4}|{label:<8}|{opcode_mnem:<8}|{operand:<12}|{lc_str:<12}|{opcode_ic:<12}|{operand_ic:<15}|{err_flag}")
         
         # After END, print remaining literals from the last pool
         if opcode_mnem == 'END':
@@ -338,7 +401,35 @@ def analyze(extracted_lines: list)->dict:
         p_end = pool_table[i + 1] - 1 if i + 1 < len(pool_table) else len(literal_table)
         p_count = p_end - p_start + 1
         print(f"{i+1:<5}|", f"{p_start:<7} |", f"{p_count:<7} |")
-    
+
+    # ---- Error Table ----
+    print("\n\nErrors Detected:")
+    W = 5; IW = 7; TW = 40; DW = 50
+    SEP_E = '-'*W + '+' + '-'*IW + '+' + '-'*TW + '+' + '-'*DW + '+'
+    print(SEP_E)
+    print(f"{'LINE':<{W}}| {'ID':<{IW-1}}| {'TYPE':<{TW-1}}| {'DESCRIPTION':<{DW-1}}|")
+    print(SEP_E)
+    if errors:
+        for (ln, eid, detail) in sorted(errors, key=lambda x: x[0]):
+            etype = error_table.get(eid, eid)
+            print(f"{ln:<{W}}| {eid:<{IW-1}}| {etype:<{TW-1}}| {detail:<{DW-1}}|")
+    else:
+        print("  No errors found.")
+    print(SEP_E)
+
+    # ---- Warning Table ----
+    print("\n\nWarnings:")
+    print(SEP_E)
+    print(f"{'LINE':<{W}}| {'ID':<{IW-1}}| {'TYPE':<{TW-1}}| {'DESCRIPTION':<{DW-1}}|")
+    print(SEP_E)
+    if warnings:
+        for (ln, wid, detail) in sorted(warnings, key=lambda x: x[0]):
+            wtype = warning_table.get(wid, wid)
+            print(f"{ln:<{W}}| {wid:<{IW-1}}| {wtype:<{TW-1}}| {detail:<{DW-1}}|")
+    else:
+        print("  No warnings.")
+    print(SEP_E)
+
 if __name__ == "__main__":
     file = './sample_ic.asm'
     lines = extract_lines(file)
