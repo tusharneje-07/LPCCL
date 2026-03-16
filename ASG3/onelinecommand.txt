@@ -1,0 +1,1 @@
+lex ASG3A.l && gcc lex.yy.c -o ASG3A && ./ASG3A < english.txt
