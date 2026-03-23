@@ -1,0 +1,1 @@
+bison -dy ASG4C.y && flex ASG4C.l && gcc lex.yy.c y.tab.c -o ASG4C && ./ASG4C
