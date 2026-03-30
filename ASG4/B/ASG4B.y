@@ -1,32 +1,49 @@
 %{
-#include<stdio.h>
-#include<stdlib.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <string.h>
 
 int yylex();
 void yyerror(const char *s);
 %}
 
-%token A N U
-
-%%
-a : A N
-  | a A
-  | a N
-  | a U a
-  | A
-  ;
-%%
-
-int main()
-{
-    printf("enter the string: ");
-    yyparse();
-    printf("valid variable\n");
-    return 0;
+%union {
+    int num;
+    char *str;
 }
 
-void yyerror(const char *s)
-{
-    printf("invalid variable\n");
-    exit(0);
+%token <num> NUMBER
+%token <str> STRING
+%token SQRT STRLEN
+
+%type <num> expr
+
+%%
+
+input:
+    expr { 
+        printf("Result = %d\n", $1); 
+        exit(0);   // terminate after one input
+    }
+    ;
+
+expr:
+      SQRT '(' NUMBER ')'   
+        { $$ = (int)sqrt($3); }
+
+    | STRLEN '(' STRING ')' 
+        { $$ = strlen($3) - 2; }  /* remove quotes */
+    ;
+
+%%
+
+void yyerror(const char *s) {
+    printf("Error: %s\n", s);
+}
+
+int main() {
+    printf("Enter function: ");
+    yyparse();
+    return 0;
 }

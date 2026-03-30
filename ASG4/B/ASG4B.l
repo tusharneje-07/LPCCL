@@ -1,18 +1,25 @@
 %{
 #include "y.tab.h"
-#include<stdio.h>
-#include<stdlib.h>
+#include <stdlib.h>
+#include <string.h>
 %}
 
 %%
-[a-zA-Z]    return A;
-[0-9]       return N;
-"_"         return U;
-\n          return 0;
-.           return yytext[0];
+[0-9]+          { yylval.num = atoi(yytext); return NUMBER; }
+
+sqrt            { return SQRT; }
+strlen          { return STRLEN; }
+
+\"[^\"]*\"      { 
+                    yylval.str = strdup(yytext);
+                    return STRING;
+                }
+
+[ \t\n]         ;   /* ignore whitespace */
+
+.               { return yytext[0]; }
 %%
 
-int yywrap()
-{
+int yywrap() {
     return 1;
 }
