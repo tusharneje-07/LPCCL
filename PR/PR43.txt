@@ -1,0 +1,58 @@
+======= Command ======
+bison -dy ASG4A.y && flex ASG4A.l && gcc lex.yy.c y.tab.c -o ASG4A && ./ASG4A
+
+======== LEX ======== (ASG3A.l)
+%{
+#include "y.tab.h"
+#include<stdio.h>
+#include<stdlib.h>
+%}
+
+%%
+[a-zA-Z]    return A;
+[0-9]       return N;
+"_"         return U;
+\n          return 0;
+.           return yytext[0];
+%%
+
+int yywrap()
+{
+    return 1;
+}
+
+
+========= YACC ========= (ASG3A.y)
+%{
+#include<stdio.h>
+#include<stdlib.h>
+
+int yylex();
+void yyerror(const char *s);
+%}
+
+%token A N U
+
+%%
+a : A N
+  | a A
+  | a N
+  | a U a
+  | a U N
+  | A
+  ;
+%%
+
+int main()
+{
+    printf("enter the string: ");
+    yyparse();
+    printf("valid variable\n");
+    return 0;
+}
+
+void yyerror(const char *s)
+{
+    printf("invalid variable\n");
+    exit(0);
+}

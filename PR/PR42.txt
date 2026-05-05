@@ -1,0 +1,81 @@
+======= Command ======
+bison -dy ASG4A.y && flex ASG4A.l && gcc lex.yy.c y.tab.c -o ASG4A && ./ASG4A
+
+======== LEX ======== (ASG3A.l)
+%{
+#include "y.tab.h"
+#include <stdlib.h>
+#include <string.h>
+%}
+
+%%
+[0-9]+          { yylval.num = atoi(yytext); return NUMBER; }
+
+sqrt            { return SQRT; }
+strlen          { return STRLEN; }
+
+\"[^\"]*\"      { 
+                    yylval.str = strdup(yytext);
+                    return STRING;
+                }
+
+[ \t\n]         ;   /* ignore whitespace */
+
+.               { return yytext[0]; }
+%%
+
+int yywrap() {
+    return 1;
+}
+
+
+========= YACC ========= (ASG3A.y)
+%{
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <string.h>
+
+int yylex();
+void yyerror(const char *s);
+%}
+
+%union {
+    int num;
+    char *str;
+}
+
+%token <num> NUMBER
+%token <str> STRING
+%token SQRT STRLEN
+
+%type <num> expr
+
+%%
+
+input:
+    expr { 
+        printf("Result = %d\n", $1); 
+        exit(0);   // terminate after one input
+    }
+    ;
+
+expr:
+      SQRT '(' NUMBER ')'   
+        { $$ = (int)sqrt($3); }
+
+    | STRLEN '(' STRING ')' 
+        { $$ = strlen($3) - 2; }  /* remove quotes */
+    ;
+
+%%
+
+void yyerror(const char *s) {
+    printf("Error: %s\n", s);
+}
+
+int main() {
+    printf("Enter function: ");
+    yyparse();
+    return 0;
+}
