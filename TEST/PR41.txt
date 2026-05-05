@@ -1,0 +1,72 @@
+======= Command ======
+bison -dy ASG4A.y && flex ASG4A.l && gcc lex.yy.c y.tab.c -o ASG4A && ./ASG4A
+
+======== LEX ======== (ASG3A.l)
+%{
+#include "y.tab.h"
+#include<stdio.h>
+#include<stdlib.h>
+%}
+
+%%
+[0-9]+      { yylval = atoi(yytext); return NUM; }
+"+"         return PLUS;
+"-"         return MINUS;
+"*"         return MUL;
+"/"         return DIV;
+"("         return LPAREN;
+")"         return RPAREN;
+\n          return 0;
+[ \t]       ;   /* ignore spaces */
+.           return yytext[0];
+%%
+
+int yywrap()
+{
+    return 1;
+}
+
+
+========= YACC ========= (ASG3A.y)
+%{
+#include<stdio.h>
+#include<stdlib.h>
+
+int yylex();
+void yyerror(const char *s);
+%}
+
+%token NUM PLUS MINUS MUL DIV LPAREN RPAREN
+
+%%
+
+S : E { printf("Result = %d\n", $1); }
+  ;
+
+E : E PLUS T   { $$ = $1 + $3; }
+  | E MINUS T  { $$ = $1 - $3; }
+  | T          { $$ = $1; }
+  ;
+
+T : T MUL F    { $$ = $1 * $3; }
+  | T DIV F    { $$ = $1 / $3; }
+  | F          { $$ = $1; }
+  ;
+
+F : LPAREN E RPAREN { $$ = $2; }
+  | NUM              { $$ = $1; }
+  ;
+
+%%
+
+int main()
+{
+    printf("Enter Expression: ");
+    yyparse();
+    return 0;
+}
+
+void yyerror(const char *s)
+{
+    printf("Invalid Expression\n");
+}
